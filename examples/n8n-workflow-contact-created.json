@@ -1,0 +1,231 @@
+{
+  "name": "CRM Contact Created - Slack Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-contact-webhook",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "CRM Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "crm-contact-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify webhook signature and extract data\nconst crypto = require('crypto');\n\n// Get headers and body\nconst signature = $input.first().headers['x-webhook-signature'];\nconst timestamp = $input.first().headers['x-webhook-timestamp'];\nconst webhookId = $input.first().headers['x-webhook-id'];\nconst eventType = $input.first().headers['x-webhook-event'];\nconst rawBody = $input.first().binary?.data?.data || JSON.stringify($input.first().json);\n\n// Your webhook secret from Supabase\nconst secret = $env.WEBHOOK_SECRET || 'your-webhook-secret-here';\n\n// Verify signature\nfunction verifySignature(payload, receivedSignature, secret) {\n  const signedPayload = `${timestamp}.${payload}`;\n  const expectedSignature = 'sha256=' + crypto\n    .createHmac('sha256', secret)\n    .update(signedPayload)\n    .digest('hex');\n  \n  return crypto.timingSafeEqual(\n    Buffer.from(expectedSignature),\n    Buffer.from(receivedSignature)\n  );\n}\n\n// Verify timestamp (prevent replay attacks - 5 minute window)\nconst requestTime = parseInt(timestamp, 10);\nconst now = Date.now();\nconst maxAge = 5 * 60 * 1000; // 5 minutes\n\nif (now - requestTime > maxAge) {\n  throw new Error('Webhook timestamp too old');\n}\n\n// Verify signature\nif (!verifySignature(rawBody, signature, secret)) {\n  throw new Error('Invalid webhook signature');\n}\n\n// Parse the webhook payload\nconst payload = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;\n\n// Extract contact data\nconst contact = payload.data;\nconst metadata = payload.metadata;\n\nreturn {\n  json: {\n    verified: true,\n    webhookId,\n    eventType,\n    contact: {\n      id: contact.id,\n      firstName: contact.first_name,\n      lastName: contact.last_name,\n      fullName: `${contact.first_name} ${contact.last_name}`,\n      email: contact.email,\n      phone: contact.phone,\n      company: contact.company_id,\n      status: contact.status,\n      source: contact.source,\n      tags: contact.tags || [],\n      createdAt: contact.created_at\n    },\n    metadata: {\n      triggeredAt: metadata.triggered_at,\n      changedFields: metadata.changed_fields || []\n    },\n    rawPayload: payload\n  }\n};"
+      },
+      "id": "verify-signature",
+      "name": "Verify & Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-event-type",
+              "leftValue": "={{ $json.eventType }}",
+              "rightValue": "contact.created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-event",
+      "name": "Filter: contact.created",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "resource": "channel",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_ID || 'C0123456789' }}"
+        },
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "🎉 New Contact Created",
+                "emoji": true
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*{{ $json.contact.fullName }}*\n{{ $json.contact.email || 'No email' }}"
+              },
+              "accessory": {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Contact",
+                  "emoji": true
+                },
+                "url": "{{ $env.CRM_BASE_URL }}/contacts/{{ $json.contact.id }}",
+                "action_id": "view_contact"
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": "📱 {{ $json.contact.phone || 'No phone' }} | 🏷️ Status: {{ $json.contact.status }} | 📍 Source: {{ $json.contact.source || 'Unknown' }}"
+                }
+              ]
+            },
+            {
+              "type": "divider"
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": "Created at {{ $json.contact.createdAt }}"
+                }
+              ]
+            }
+          ]
+        },
+        "otherOptions": {}
+      },
+      "id": "slack-notification",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [910, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "1",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Webhook processed', webhookId: $json.webhookId }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Processed-By",
+                "value": "n8n"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error?.message || 'Processing failed' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [690, 500]
+    }
+  ],
+  "connections": {
+    "CRM Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify & Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify & Process": {
+      "main": [
+        [
+          {
+            "node": "Filter: contact.created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: contact.created": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "1",
+      "name": "CRM"
+    },
+    {
+      "id": "2",
+      "name": "Webhooks"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

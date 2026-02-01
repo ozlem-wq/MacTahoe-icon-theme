@@ -1,0 +1,378 @@
+{
+  "name": "CRM Deal Stage Change - Multi-Action Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-deal-webhook",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Deal Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "crm-deal-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify and process deal webhook\nconst crypto = require('crypto');\n\nconst signature = $input.first().headers['x-webhook-signature'];\nconst timestamp = $input.first().headers['x-webhook-timestamp'];\nconst rawBody = $input.first().binary?.data?.data || JSON.stringify($input.first().json);\nconst secret = $env.WEBHOOK_SECRET;\n\n// Verify signature\nfunction verifySignature(payload, receivedSignature, secret) {\n  const signedPayload = `${timestamp}.${payload}`;\n  const expectedSignature = 'sha256=' + crypto\n    .createHmac('sha256', secret)\n    .update(signedPayload)\n    .digest('hex');\n  return expectedSignature === receivedSignature;\n}\n\nif (!verifySignature(rawBody, signature, secret)) {\n  throw new Error('Invalid signature');\n}\n\nconst payload = JSON.parse(rawBody);\nconst deal = payload.data;\nconst oldDeal = payload.old_data;\nconst changedFields = payload.metadata.changed_fields || [];\n\n// Detect stage change\nconst stageChanged = changedFields.includes('stage_id');\nconst statusChanged = changedFields.includes('status');\n\nreturn {\n  json: {\n    eventType: payload.event,\n    deal: {\n      id: deal.id,\n      name: deal.name,\n      value: deal.value,\n      currency: deal.currency,\n      formattedValue: new Intl.NumberFormat('en-US', {\n        style: 'currency',\n        currency: deal.currency || 'USD'\n      }).format(deal.value),\n      stageId: deal.stage_id,\n      status: deal.status,\n      probability: deal.probability,\n      expectedCloseDate: deal.expected_close_date,\n      contactId: deal.contact_id,\n      companyId: deal.company_id,\n      assignedTo: deal.assigned_to\n    },\n    previousDeal: oldDeal ? {\n      stageId: oldDeal.stage_id,\n      status: oldDeal.status,\n      value: oldDeal.value\n    } : null,\n    changes: {\n      stageChanged,\n      statusChanged,\n      changedFields\n    },\n    isWon: deal.status === 'won' && statusChanged,\n    isLost: deal.status === 'lost' && statusChanged\n  }\n};"
+      },
+      "id": "process-deal",
+      "name": "Process Deal Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isWon }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Won"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isLost }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Lost"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.changes.stageChanged }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Stage Changed"
+            }
+          ]
+        }
+      },
+      "id": "switch-deal-type",
+      "name": "Route by Change Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "resource": "channel",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SALES_CHANNEL_ID }}"
+        },
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "🎊 Deal Won!",
+                "emoji": true
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*{{ $json.deal.name }}*\nValue: *{{ $json.deal.formattedValue }}*"
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": "Closed by <@{{ $json.deal.assignedTo }}>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "slack-won",
+      "name": "Celebrate Win",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [910, 180],
+      "credentials": {
+        "slackApi": {
+          "id": "1",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "channel",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SALES_CHANNEL_ID }}"
+        },
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "😔 Deal Lost: *{{ $json.deal.name }}* ({{ $json.deal.formattedValue }})"
+              }
+            }
+          ]
+        }
+      },
+      "id": "slack-lost",
+      "name": "Log Loss",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [910, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "1",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "channel",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SALES_CHANNEL_ID }}"
+        },
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "📊 *{{ $json.deal.name }}* moved to new stage\nValue: {{ $json.deal.formattedValue }} | Probability: {{ $json.deal.probability }}%"
+              }
+            }
+          ]
+        }
+      },
+      "id": "slack-stage-change",
+      "name": "Notify Stage Change",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [910, 420],
+      "credentials": {
+        "slackApi": {
+          "id": "1",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ANALYTICS_ENDPOINT }}/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.ANALYTICS_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event",
+              "value": "deal_won"
+            },
+            {
+              "name": "properties",
+              "value": "={{ JSON.stringify({ deal_id: $json.deal.id, value: $json.deal.value, currency: $json.deal.currency }) }}"
+            }
+          ]
+        }
+      },
+      "id": "track-analytics",
+      "name": "Track in Analytics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1130, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1350, 300]
+    }
+  ],
+  "connections": {
+    "Deal Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Deal Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Deal Update": {
+      "main": [
+        [
+          {
+            "node": "Route by Change Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Change Type": {
+      "main": [
+        [
+          {
+            "node": "Celebrate Win",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Loss",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Stage Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Celebrate Win": {
+      "main": [
+        [
+          {
+            "node": "Track in Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Loss": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Stage Change": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Track in Analytics": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "id": "1",
+      "name": "CRM"
+    },
+    {
+      "id": "2",
+      "name": "Sales"
+    }
+  ]
+}
