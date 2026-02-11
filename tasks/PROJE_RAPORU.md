@@ -287,18 +287,44 @@ Sadece env var'i degistirmek, mevcut PG data volume'undaki sifreleri degistirmiy
 
 ---
 
-## 12. Dosya Yapisi
+## 12. Ekran Goruntuleri
+
+### Metabase Login Sayfasi
+![Login Sayfasi](screenshots/01-login-page.png)
+
+### Ana Sayfa (Giris Sonrasi)
+![Ana Sayfa](screenshots/02-home.png)
+
+### AtomicCRM Collection (Tum Sorgular)
+![AtomicCRM Collection](screenshots/03-collection.png)
+
+### AtomicCRM Dashboard (KPI'lar ve Tablolar)
+![AtomicCRM Dashboard](screenshots/04-dashboard-top.png)
+
+### Veritabani Yonetimi (Supabase CRM Baglantisi)
+![Veritabani Yonetimi](screenshots/07-databases.png)
+
+---
+
+## 13. Dosya Yapisi
+
 
 ```
 tasks/
 ├── PROJE_RAPORU.md     ← Bu dosya (proje raporu)
 ├── todo.md             ← Gorev listesi (tum adimlar tamamlandi)
-└── lessons.md          ← Ogrenilen dersler ve hata kayitlari
+├── lessons.md          ← Ogrenilen dersler ve hata kayitlari
+└── screenshots/        ← Ekran goruntuleri
+    ├── 01-login-page.png
+    ├── 02-home.png
+    ├── 03-collection.png
+    ├── 04-dashboard-top.png
+    └── 07-databases.png
 ```
 
 ---
 
-## 13. Tarihce
+## 14. Tarihce
 
 | Tarih | Olay |
 |-------|------|
@@ -312,7 +338,7 @@ tasks/
 
 ---
 
-## 14. Durum
+## 15. Durum
 
 **TUM ADIMLAR TAMAMLANDI** ✅
 
