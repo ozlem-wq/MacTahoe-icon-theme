@@ -321,7 +321,3 @@ tasks/
 - AtomicCRM Dashboard canli ve veri gosteriyor
 - Guvenlik onlemleri uygulanmis
 - Metabase admin sifresi rotate edilmis
-
-**Kalan Aksiyonlar:**
-- [ ] Coolify API token'i Dashboard'dan rotate et
-- [ ] Supabase PG sifresini SSH erisimi ile rotate et (opsiyonel, risk analizi gerektirir)
